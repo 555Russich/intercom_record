@@ -40,6 +40,7 @@ class IntercomRecorder:
         self.password = PIK_PASSWORD
         self.device_id = DEFAULT_DEVICE_ID
         self.user_agent = DEFAULT_USER_AGENT
+        self.record_threads = None
 
     def authorize(self, s: Session) -> str:
         headers = {
@@ -106,12 +107,10 @@ class IntercomRecorder:
         else:
             raise RequestException('Get stream urls error')
 
-    @staticmethod
-    def record_stream(stream_data: dict) -> Path:
+    def record_stream(self, stream_data: dict) -> Path:
         """ Capturing RTSP stream """
 
         def get_stream_filepath(name: str) -> Path:
-            """ Get stream filepath """
             current_datetime = datetime.now(tz=ZoneInfo('Europe/Moscow'))
             filename = '_'.join(f"{name}_{current_datetime.strftime('%d-%m-%y %Hh')}_1".split())
             while True:
@@ -126,17 +125,19 @@ class IntercomRecorder:
 
         out = cv2.VideoWriter(str(filepath), cv2.VideoWriter_fourcc(*'XVID'), FPS, RESOLUTION)
         cap = cv2.VideoCapture(stream_data['url'])
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret or datetime.now().minute == 0 and datetime.now().second in (0, 1):
-                logging.info(f"{ms}[Stream ended] Can't receive frame.")
-                break
-            out.write(frame)
-            time.sleep(.01)
-        else:
-            logging.info(f'{ms}Capture is closed')
-        cap.release()
-        out.release()
+        try:
+            while cap.isOpened() and all(tr.is_alive() for tr in self.record_threads):
+                ret, frame = cap.read()
+                if not ret or datetime.now().minute == 0 and datetime.now().second == 0:
+                    logging.info(f"{ms}[Stream ended] Can't receive frame.")
+                    break
+                out.write(frame)
+                time.sleep(.01)
+            else:
+                logging.info(f'{ms}Capture is closed')
+        finally:
+            cap.release()
+            out.release()
 
         return filepath
 
@@ -178,8 +179,7 @@ class IntercomRecorder:
                     logging.error(error)
                     continue
 
-                filepaths = []
-                videos_uploaded = False 
+                videos_uploaded = False
                 while True:
                     try:
                         streams_data = self.get_available_streams(s, bearer_token)
@@ -187,34 +187,31 @@ class IntercomRecorder:
                         logging.error(error)
                         break
 
-                    trs = [
-                        MyThread(
-                            target=self.record_stream,
-                            args=(stream_data,),
-                            name=stream_data['name']
-                            )
+                    self.record_threads = [MyThread(
+                        target=self.record_stream,
+                        args=(stream_data,),
+                    )
                         for stream_data in streams_data]
 
-                    for tr in trs: tr.start()
-                    for tr in trs: filepaths.append(tr.join())
-
-                    # p = Pool()
-                    # filepaths += p.map(self.record_stream, streams_data)
+                    for tr in self.record_threads: tr.start()
+                    for tr in self.record_threads: tr.join()
 
                     current_dt = datetime.now(tz=ZoneInfo('Europe/Moscow'))
                     if not videos_uploaded and current_dt.minute == 0:
                         threads_concatenate = []
                         for stream_data in streams_data:
-                            filepaths_to_concatenate = [filepath for filepath in filepaths
-                                                        if '_'.join(stream_data['name'].split()) in str(filepath)]
+                            filepaths_to_concat = [
+                                Path(FOLDER_STREAM_PARTS, filename)
+                                for filename in os.listdir(FOLDER_STREAM_PARTS)
+                                if '_'.join(stream_data['name'].split()) in filename
+                            ]
                             tr = MyThread(
                                 target=self.concatenate_video_parts,
-                                args=(filepaths_to_concatenate,)
+                                args=(filepaths_to_concat,)
                             )
                             threads_concatenate.append(tr)
                             tr.start()
 
-                        filepaths = []
                         videos_uploaded = True
                         MyThread(
                             target=self.join_threads_and_upload,
@@ -223,7 +220,7 @@ class IntercomRecorder:
                                 current_dt.strftime('%d-%m-%y')
                             )
                         ).start()
-                    elif videos_uploaded and current_dt.minute >= 10:
+                    elif videos_uploaded and current_dt.minute >= 15:
                         videos_uploaded = False
 
 
