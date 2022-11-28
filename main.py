@@ -144,6 +144,7 @@ class IntercomRecorder:
     @staticmethod
     def concatenate_video_parts(video_paths: list[Path]):
         """ Concatenate 2.5 videos to n minutes one video """
+        video_paths.sort(key=lambda x: int(re.search(r'(?<=_)\d+$', '.'.join(x.split('.')[:-1])).group(0)))
         new_filename = '_'.join(video_paths[0].stem.split('_')[:-1])
         new_filepath = Path(FOLDER_STREAM_TO_UPLOAD, *video_paths[0].parts[1:-1], new_filename + VIDEO_EXTENSION)
         logging.info(f'Start concatenate captured videos for {new_filename}')
