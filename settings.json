@@ -1,0 +1,16 @@
+{
+    "pik": {
+        "login": "+78005553535",
+        "password": "qwertyIsMyFish",
+        "cameras_names": [
+            "13 этаж дверь 1",
+            "подъезд вход со двора",
+            "подъезд вход с улицы"
+        ]
+    },
+    "yandex": {
+        "token": "y0_AbCdEfG",
+        "folder_streams": "domophone_records",
+        "rotation_days": 14
+    }
+}
