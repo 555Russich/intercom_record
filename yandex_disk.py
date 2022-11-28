@@ -21,12 +21,14 @@ def upload_videos(y: yadisk.YaDisk, local_folder: str, date: str):
         pass
     
     for filename in os.listdir(local_folder):
-        local_path = f'{local_folder}/{filename}'
+        # files with .avi extension uploads to cloud very slowly, here extension removing
         filename, extension = '.'.join(filename.split('.')[:-1]), filename.split('.')[-1]
+        local_path = f'{local_folder}/{filename}.{extension}'
         yandex_path = f'{YANDEX_FOLDER_STREAMS}/{date}/{filename}'
-        y.upload(local_path, yandex_path, timeout=(10, 3*60))
+        y.upload(local_path, yandex_path, timeout=(10, 5*60))
         os.remove(local_path)
-        y.move(yandex_path, yandex_path + extension)
+        # extension coming back
+        y.move(yandex_path, f'{yandex_path}.{extension}')
         logging.info(f'{local_path} was uploaded and removed from local folder')
     else:
         logging.info(f'All files from {local_folder=} was uploaded and removed from local folder')
