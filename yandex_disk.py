@@ -75,4 +75,3 @@ def upload_and_remove(dt):
     y = yadisk.YaDisk(token=TOKEN)
     upload_videos(y, dt)
     remove_old_streams(y, dt)
-
