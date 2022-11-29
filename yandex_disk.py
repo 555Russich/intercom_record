@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import json
 import logging
 from pathlib import Path
@@ -27,16 +28,15 @@ def upload_videos(y: yadisk.YaDisk, dt: datetime):
             # files with extension uploads to cloud very slowly
             cloud_filepath = Path(camera_dir, filepath.stem)
 
-            print([f for f in cloud_filepath.parents])
             for _dir in reversed(cloud_filepath.parents[:-1]):
                 try:
                     y.mkdir(_dir)
                 except yadisk.exceptions.PathExistsError:
                     pass
 
-            y.upload(str(filepath), str(cloud_filepath), timeout=(10, 10*60))
-            # extension coming back
-            y.move(str(cloud_filepath), str(cloud_filepath.with_suffix(filepath.suffix)))
+            # y.upload(str(filepath), str(cloud_filepath), timeout=(10, 10*60))
+            # # extension coming back
+            # y.move(str(cloud_filepath), str(cloud_filepath.with_suffix(filepath.suffix)))
 
             filepath.unlink()
             hour_dir.rmdir()
@@ -51,17 +51,17 @@ def upload_videos(y: yadisk.YaDisk, dt: datetime):
                      f' was uploaded and removed from local')
 
     try:
-        date_dir.mkdir()
+        date_dir.rmdir()
     except OSError:
         pass
 
 
 def remove_old_streams(y: yadisk.YaDisk, dt: datetime):
     """ ROTATIONS_DAYS from settings.json using here to remove old files from cloud """
-    date_until_remove = dt - timedelta(days=int(ROTATION_DAYS))
 
+    date_until_remove = dt - timedelta(days=int(ROTATION_DAYS))
     for dir_data in y.listdir(f'/{FOLDER_RECORDS}'):
-        dir_date = datetime.strptime(dir_data['name'], '%d-%m-%y')
+        dir_date = datetime.strptime(dir_data['name'], '%d-%m-%y').replace(tzinfo=ZoneInfo('Europe/Moscow'))
         if dir_date < date_until_remove:
             y.remove(
                 str(Path(FOLDER_RECORDS, dir_data["name"])),
@@ -75,3 +75,4 @@ def upload_and_remove(dt):
     y = yadisk.YaDisk(token=TOKEN)
     upload_videos(y, dt)
     remove_old_streams(y, dt)
+
