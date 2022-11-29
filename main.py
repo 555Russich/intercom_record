@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
+from multiprocessing import Process
 
 from requests import Session, RequestException
 import cv2
@@ -30,7 +31,7 @@ FOLDER_STREAM_TO_UPLOAD = 'stream_to_upload'
 _ = [os.mkdir(folder) for folder in (
         FOLDER_STREAM_PARTS,
         FOLDER_STREAM_TO_UPLOAD
-    ) 
+    )
     if not os.path.exists(folder)]
 
 
@@ -167,8 +168,8 @@ class IntercomRecorder:
         return new_filepath
 
     @staticmethod
-    def join_threads_and_upload(threads: list[MyThread], date: str):
-        for tr in threads: tr.join()
+    def wait_concat_and_upload(prs: list[Process], date: str):
+        for pr in prs: pr.join()
         upload_and_remove(local_folder=FOLDER_STREAM_TO_UPLOAD, date=date)
 
     def start_recording(self):
@@ -199,25 +200,26 @@ class IntercomRecorder:
 
                     current_dt = datetime.now(tz=ZoneInfo('Europe/Moscow'))
                     if not videos_uploaded and current_dt.minute == 0:
-                        threads_concatenate = []
+                        prs_concat = []
                         for stream_data in streams_data:
                             filepaths_to_concat = [
                                 Path(FOLDER_STREAM_PARTS, filename)
                                 for filename in os.listdir(FOLDER_STREAM_PARTS)
-                                if '_'.join(stream_data['name'].split()) in filename
+                                if f"{'_'.join(stream_data['name'].split())}" in filename and \
+                                str(current_dt.hour - 1).zfill(2) + 'h' in filename
                             ]
-                            tr = MyThread(
+                            pr = Process(
                                 target=self.concatenate_video_parts,
                                 args=(filepaths_to_concat,)
                             )
-                            threads_concatenate.append(tr)
-                            tr.start()
+                            prs_concat.append(pr)
+                            pr.start()
 
                         videos_uploaded = True
                         MyThread(
-                            target=self.join_threads_and_upload,
+                            target=self.wait_concat_and_upload,
                             args=(
-                                threads_concatenate,
+                                prs_concat,
                                 current_dt.strftime('%d-%m-%y')
                             )
                         ).start()
