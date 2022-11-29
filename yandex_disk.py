@@ -34,9 +34,9 @@ def upload_videos(y: yadisk.YaDisk, dt: datetime):
                 except yadisk.exceptions.PathExistsError:
                     pass
 
-            # y.upload(str(filepath), str(cloud_filepath), timeout=(10, 10*60))
-            # # extension coming back
-            # y.move(str(cloud_filepath), str(cloud_filepath.with_suffix(filepath.suffix)))
+            y.upload(str(filepath), str(cloud_filepath), timeout=(10, 10*60))
+            # extension coming back
+            y.move(str(cloud_filepath), str(cloud_filepath.with_suffix(filepath.suffix)))
 
             filepath.unlink()
             hour_dir.rmdir()
