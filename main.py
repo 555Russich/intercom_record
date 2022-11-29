@@ -6,12 +6,12 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from multiprocessing import Process
+from threading import Thread
 
 from requests import Session, RequestException
 import cv2
 
 from my_logging import get_logger
-from my_threading import MyThread
 from yandex_disk import upload_and_remove
 
 
@@ -211,7 +211,7 @@ class IntercomRecorder:
                         logging.error(error)
                         break
 
-                    self.record_threads = [MyThread(
+                    self.record_threads = [Thread(
                         target=self.record_stream,
                         args=(stream_data,)
                     )
@@ -238,7 +238,7 @@ class IntercomRecorder:
                             pr.start()
 
                         videos_uploaded = True
-                        MyThread(
+                        Thread(
                             target=self.wait_concat_and_upload,
                             args=(
                                 prs_concat,
