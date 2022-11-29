@@ -1,55 +1,77 @@
 from datetime import datetime, timedelta
 import json
-import os
 import logging
+from pathlib import Path
 
 import yadisk
 
 with open('settings.json', 'r') as f:
-    TOKEN, YANDEX_FOLDER_STREAMS, ROTATION_DAYS = json.load(f)['yandex'].values()
+    settings = json.load(f)
+    FOLDER_RECORDS = settings['path_to_records']
+    TOKEN, ROTATION_DAYS = settings['yandex'].values()
 
 
-def upload_videos(y: yadisk.YaDisk, local_folder: str, date: str):
-    try:
-        y.mkdir(YANDEX_FOLDER_STREAMS)
-    except yadisk.exceptions.PathExistsError:
-        pass
-    
-    try:
-        y.mkdir(f'{YANDEX_FOLDER_STREAMS}/{date}')
-    except yadisk.exceptions.PathExistsError:
-        pass
-    
-    for filename in os.listdir(local_folder):
-        # files with .avi extension uploads to cloud very slowly, here extension removing
-        filename, extension = '.'.join(filename.split('.')[:-1]), filename.split('.')[-1]
-        local_path = f'{local_folder}/{filename}.{extension}'
-        yandex_path = f'{YANDEX_FOLDER_STREAMS}/{date}/{filename}'
-        y.upload(local_path, yandex_path, timeout=(10, 5*60))
-        os.remove(local_path)
-        # extension coming back
-        y.move(yandex_path, f'{yandex_path}.{extension}')
-        logging.info(f'{local_path} was uploaded and removed from local folder')
+def upload_videos(y: yadisk.YaDisk, dt: datetime):
+    """ Upload files to Yandex cloud without file extension,
+     move extension back, delete local files and check
+     if files on cloud are older than ROTATION_DAYS
+     """
+
+    date_dir = Path(FOLDER_RECORDS, dt.strftime('%d-%m-%y'))
+    for camera_dir in date_dir.iterdir():
+        if camera_dir.is_dir():
+            hour_dir = Path(camera_dir, dt.strftime('%Hh'))
+            filepaths = [f for f in hour_dir.iterdir()]
+            assert len(filepaths) == 1
+            filepath = filepaths[0]
+            # files with extension uploads to cloud very slowly
+            cloud_filepath = Path(camera_dir, filepath.stem)
+
+            print([f for f in cloud_filepath.parents])
+            for _dir in reversed(cloud_filepath.parents[:-1]):
+                try:
+                    y.mkdir(_dir)
+                except yadisk.exceptions.PathExistsError:
+                    pass
+
+            y.upload(str(filepath), str(cloud_filepath), timeout=(10, 10*60))
+            # extension coming back
+            y.move(str(cloud_filepath), str(cloud_filepath.with_suffix(filepath.suffix)))
+
+            filepath.unlink()
+            hour_dir.rmdir()
+            try:
+                camera_dir.rmdir()
+            except OSError:
+                pass
+
+            logging.info(f'{filepath.name} was uploaded and removed from local')
     else:
-        logging.info(f'All files from {local_folder=} was uploaded and removed from local folder')
+        logging.info(f'All videos by {dt.strftime("%d-%m-%y")} date and {dt.strftime("%H")} hour'
+                     f' was uploaded and removed from local')
+
+    try:
+        date_dir.mkdir()
+    except OSError:
+        pass
 
 
-def remove_old_streams(y: yadisk.YaDisk, date: str):
-    current_date = datetime.strptime(date, '%d-%m-%y')
-    date_until_remove = current_date - timedelta(days=int(ROTATION_DAYS))
-    
-    for folder_data in y.listdir(f'/{YANDEX_FOLDER_STREAMS}'):   
-        folder_date = datetime.strptime(folder_data['name'], '%d-%m-%y')
-        if folder_date < date_until_remove:
+def remove_old_streams(y: yadisk.YaDisk, dt: datetime):
+    """ ROTATIONS_DAYS from settings.json using here to remove old files from cloud """
+    date_until_remove = dt - timedelta(days=int(ROTATION_DAYS))
+
+    for dir_data in y.listdir(f'/{FOLDER_RECORDS}'):
+        dir_date = datetime.strptime(dir_data['name'], '%d-%m-%y')
+        if dir_date < date_until_remove:
             y.remove(
-                f'/{YANDEX_FOLDER_STREAMS}/{folder_data["name"]}',
+                str(Path(FOLDER_RECORDS, dir_data["name"])),
                 permanently=True,
                 timeout=60
             )
-            logging.info(f'Folder "{folder_data["name"]}" was removed from yandex disk')
+            logging.info(f'Folder "{dir_data["name"]}" was removed from yandex disk')
 
 
-def upload_and_remove(local_folder: str, date: str):
+def upload_and_remove(dt):
     y = yadisk.YaDisk(token=TOKEN)
-    upload_videos(y, local_folder, date)
-    remove_old_streams(y, date)
+    upload_videos(y, dt)
+    remove_old_streams(y, dt)
