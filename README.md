@@ -1,6 +1,6 @@
 Record intercom RTSP video stream and upload files to yandex disk.
 
-PIK authentification requires
+PIK authentication requires
 
 1. [get yandex TOKEN](https://yandex.ru/dev/id/doc/dg/oauth/tasks/get-oauth-token.html)
 
