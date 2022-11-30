@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import json
 import logging
-import traceback
 from pathlib import Path
 
 import yadisk
