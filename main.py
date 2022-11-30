@@ -22,7 +22,7 @@ with open('settings.json', 'r') as f:
     PIK_LOGIN, PIK_PASSWORD, CAMERAS_NAMES = settings['pik'].values()
 
 DEFAULT_DEVICE_ID = 'NKGHS3I6-3C00-4555-823A-D7F2DC854A7C'
-DEFAULT_USER_AGENT = 'domophone-ios/315645 CFNetwork/1390 Darwin/22.0.0'
+DEFAULT_USER_AGENT = 'asdasdasdgSFSDKLfjsldkflkds'
 
 EXTENSION = '.avi'
 FPS = 25
