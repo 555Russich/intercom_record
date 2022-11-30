@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import json
 import logging
+import traceback
 from pathlib import Path
 
 import yadisk
@@ -28,7 +29,7 @@ def upload_videos(y: yadisk.YaDisk, dt: datetime):
             # files with extension uploads to cloud very slowly
             cloud_filepath = Path(camera_dir, filepath.stem)
 
-            for _dir in reversed(cloud_filepath.parents[:-1]):
+            for _dir in reversed([x for x in cloud_filepath.parents][:-1]):
                 try:
                     y.mkdir(_dir)
                 except yadisk.exceptions.PathExistsError:
