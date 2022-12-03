@@ -2,6 +2,8 @@ import logging
 import re
 import json
 import time
+import argparse
+import shutil
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -121,7 +123,7 @@ class IntercomRecorder:
                             ).with_suffix(EXTENSION)
 
             for p in reversed(filepath.parents):
-                p.mkdir() if not p.exists() else None
+                p.mkdir(exist_ok=True)
 
             if [p for p in filepath.parent.iterdir()]:
                 parts = [int(re.search(r'(?<=_)\d+$', p.stem).group(0)) for p in filepath.parent.iterdir()]
@@ -145,7 +147,7 @@ class IntercomRecorder:
                 out.write(frame)
                 time.sleep(.01)
             else:
-                logging.info(f'name="{filepath.name}". Capture is closed. *probably was not even open')
+                logging.info(f'name="{filepath.name}". Capture is closed')
         finally:
             cap.release()
             out.release()
@@ -196,6 +198,11 @@ class IntercomRecorder:
             logging.error(ex, exc_info=True)
         finally:
             videos_uploaded = False
+
+    @staticmethod
+    def remove_local_dir_records():
+        shutil.rmtree(FOLDER_RECORDS, ignore_errors=True)
+        logging.info(f'Local "{FOLDER_RECORDS}" directory was removed')
 
     def start_recording(self):
         global videos_uploaded
@@ -251,6 +258,23 @@ class IntercomRecorder:
                         ).start()
 
 
+def main():
+    intercom_recorder = IntercomRecorder()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-r',
+        action='store_true',
+        help=f'before start run: rm -rf "{FOLDER_RECORDS}"'
+    )
+    args = parser.parse_args()
+
+    if args.r:
+        intercom_recorder.remove_local_dir_records()
+
+    intercom_recorder.start_recording()
+
+
 if __name__ == '__main__':
     get_logger('IntercomRecorder.log')
-    IntercomRecorder().start_recording()
+    main()
