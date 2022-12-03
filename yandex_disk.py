@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import json
@@ -29,10 +30,21 @@ def upload_videos(y: yadisk.YaDisk, dt: datetime):
             cloud_filepath = Path(camera_dir, filepath.stem)
 
             for _dir in reversed([x for x in cloud_filepath.parents][:-1]):
-                try:
-                    y.mkdir(_dir)
-                except yadisk.exceptions.PathExistsError:
-                    pass
+                for retry in range(1, 4):
+                    try:
+                        y.mkdir(str(_dir))
+                        break
+                    except yadisk.exceptions.PathExistsError:
+                        break
+                    except Exception as ex:
+                        if retry == 3:
+                            logging.error(ex, exc_info=True)
+                            raise ex
+                        else:
+                            logging.warning(ex, exc_info=True)
+                        time.sleep(5)
+                    finally:
+                        time.sleep(1)
 
             y.upload(str(filepath), str(cloud_filepath), timeout=(10, 10*60))
             # extension coming back
