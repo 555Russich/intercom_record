@@ -38,7 +38,6 @@ def upload_videos(y: yadisk.YaDisk, dt: datetime):
                         break
                     except Exception as ex:
                         if retry == 3:
-                            logging.error(ex, exc_info=True)
                             raise ex
                         else:
                             logging.warning(ex, exc_info=True)
@@ -47,8 +46,8 @@ def upload_videos(y: yadisk.YaDisk, dt: datetime):
                         time.sleep(1)
 
             y.upload(str(filepath), str(cloud_filepath), timeout=(10, 10*60))
-            # extension coming back
-            y.move(str(cloud_filepath), str(cloud_filepath.with_suffix(filepath.suffix)))
+            # # extension coming back
+            # y.move(str(cloud_filepath), str(cloud_filepath.with_suffix(filepath.suffix)))
 
             filepath.unlink()
             hour_dir.rmdir()
