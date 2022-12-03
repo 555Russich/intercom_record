@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from multiprocessing import Process
 from threading import Thread
-import traceback
 
 from requests import Session, RequestException
 import cv2
@@ -22,7 +21,7 @@ with open('settings.json', 'r') as f:
     PIK_LOGIN, PIK_PASSWORD, CAMERAS_NAMES = settings['pik'].values()
 
 DEFAULT_DEVICE_ID = 'NKGHS3I6-3C00-4555-823A-D7F2DC854A7C'
-DEFAULT_USER_AGENT = 'asdasdasdgSFSDKLfjsldkflkds'
+DEFAULT_USER_AGENT = 'domophone-ios/315645 CFNetwork/1390 Darwin/22.0.0'
 
 EXTENSION = '.avi'
 FPS = 25
@@ -188,13 +187,13 @@ class IntercomRecorder:
     def wait_concat_and_upload(prs: list[Process], dt: datetime):
         global videos_uploaded
 
-        try:
-            for pr in prs:
-                pr.join()
+        for pr in prs:
+            pr.join()
 
+        try:
             upload_and_remove(dt)
-        except Exception as err:
-            logging.error(traceback.print_exception(err))
+        except Exception as ex:
+            logging.error(ex, exc_info=True)
         finally:
             videos_uploaded = False
 
