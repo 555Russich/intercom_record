@@ -1,17 +1,16 @@
 import logging
 import re
 import json
+import subprocess
 import time
 import argparse
 import shutil
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from multiprocessing import Process
 from threading import Thread
 
 from requests import Session, RequestException
-import cv2
 
 from my_logging import get_logger
 from yandex_disk import upload_and_remove
@@ -25,21 +24,18 @@ with open('settings.json', 'r') as f:
 DEFAULT_DEVICE_ID = 'NKGHS3I6-3C00-4555-823A-D7F2DC854A7C'
 DEFAULT_USER_AGENT = 'domophone-ios/315645 CFNetwork/1390 Darwin/22.0.0'
 
-EXTENSION = '.avi'
-FPS = 25
-RESOLUTION = (1280, 720)
-
-
-videos_uploaded = False
+EXTENSION = '.mp4'
 
 
 class IntercomRecorder:
-    def __init__(self):
-        self.phone_number: str = PIK_LOGIN
-        self.password: str = PIK_PASSWORD
-        self.device_id: str = DEFAULT_DEVICE_ID
-        self.user_agent: str = DEFAULT_USER_AGENT
-        self.record_threads: list = []
+    def __init__(self, pik_login=PIK_LOGIN, pik_password=PIK_PASSWORD,
+                 device_id=DEFAULT_DEVICE_ID, user_agent=DEFAULT_USER_AGENT):
+        self.phone_number = pik_login
+        self.password = pik_password
+        self.device_id = device_id
+        self.user_agent = user_agent
+        self.tr_concat = None
+        self.tr_upload = None
 
     def authorize(self, s: Session) -> str:
         headers = {
@@ -62,6 +58,7 @@ class IntercomRecorder:
             'https://intercom.pik-comfort.ru/api/customers/sign_in',
             headers=headers,
             data=data,
+            timeout=10
         )
         if r.status_code == 200:
             logging.info('Authorized to pik intercom')
@@ -92,6 +89,7 @@ class IntercomRecorder:
             'https://iot.rubetek.com/api/alfred/v1/personal/intercoms',
             params=params,
             headers=headers,
+            timeout=10
         )
         if r.status_code == 200:
             return [
@@ -104,108 +102,124 @@ class IntercomRecorder:
             ]
         raise RequestException(f'Get stream urls error. Response code is {r.status_code}')
 
-    def record_stream(self, stream_data: dict) -> Path:
-        """ Capturing RTSP stream """
+    @staticmethod
+    def get_stream_filepath(camera_name: str) -> Path:
+        """ return FOLDER_RECORDS/camera_name/date/hour/[camera_name]_[date]_[hour]h_[n].[extension] """
 
-        def get_stream_filepath(camera_name: str) -> Path:
-            """ mkdir FOLDER_RECORDS/date
-                mkdir FOLDER_RECORDS/date/camera_name
-                mkdir FOLDER_RECORDS/date/camera_name/hour
-                :return: FOLDER_RECORDS/camera_name/date/hour/[camera_name]_[date]_[hour]H_[n].[extension]
-            """
+        current_dt = datetime.now(tz=ZoneInfo('Europe/Moscow'))
+        filepath = Path(
+            FOLDER_RECORDS,
+            current_dt.strftime('%d-%m-%y'),
+            camera_name,
+            current_dt.strftime('%Hh'),
+            f"{camera_name}_{current_dt.strftime('%d-%m-%y_%Hh')}_1"
+        ).with_suffix(EXTENSION)
 
-            current_dt = datetime.now(tz=ZoneInfo('Europe/Moscow'))
-            filepath = Path(FOLDER_RECORDS,
-                            current_dt.strftime('%d-%m-%y'),
-                            camera_name,
-                            current_dt.strftime('%Hh'),
-                            f"{camera_name}_{current_dt.strftime('%d-%m-%y_%Hh')}_1"
-                            ).with_suffix(EXTENSION)
+        for p in reversed(filepath.parents):
+            p.mkdir(exist_ok=True)
 
-            for p in reversed(filepath.parents):
-                p.mkdir(exist_ok=True)
-
-            if [p for p in filepath.parent.iterdir()]:
-                parts = [int(re.search(r'(?<=_)\d+$', p.stem).group(0)) for p in filepath.parent.iterdir()]
-                parts.sort()
-                filepath = Path(filepath.parent,
-                                re.sub(r'(?<=_)\d+$', str(parts[-1] + 1), filepath.stem)
-                                ).with_suffix(EXTENSION)
-            return filepath
-
-        filepath = get_stream_filepath(stream_data['name'])
-        logging.info(f'name="{filepath.name}". START capture stream')
-
-        out = cv2.VideoWriter(str(filepath), cv2.VideoWriter_fourcc(*'XVID'), FPS, RESOLUTION)
-        cap = cv2.VideoCapture(stream_data['url'])
-        try:
-            while cap.isOpened() and all(tr.is_alive() for tr in self.record_threads):
-                ret, frame = cap.read()
-                if not ret or datetime.now().minute == 0 and datetime.now().second == 0:
-                    logging.info(f'name="{filepath.name}" END capture stream')
-                    break
-                out.write(frame)
-                time.sleep(.01)
-            else:
-                logging.info(f'name="{filepath.name}". Capture is closed')
-        finally:
-            cap.release()
-            out.release()
+        if [p for p in filepath.parent.iterdir()]:
+            parts = [int(re.search(r'(?<=_)\d+$', p.stem).group(0)) for p in filepath.parent.iterdir()]
+            parts.sort()
+            filepath = Path(
+                filepath.parent,
+                re.sub(r'(?<=_)\d+$', str(parts[-1] + 1), filepath.stem)
+            ).with_suffix(EXTENSION)
         return filepath
 
-    @staticmethod
-    def concatenate_video_parts(camera_name: str, dt: datetime):
-        """ Concatenate 2 videos to n minutes one video """
+    def record_all_streams(self, streams_data: list[dict]) -> None:
+        """ Capturing RTSP stream """
 
-        dir_parts = Path(FOLDER_RECORDS,
-                         dt.strftime('%d-%m-%y'),
-                         camera_name,
-                         dt.strftime('%Hh'),
-                         )
-        video_stems = [f.stem for f in dir_parts.iterdir()]
-        video_stems.sort(key=lambda x: int(re.search(r'(?<=_)\d+$', x).group(0)))
-        new_filepath = Path(dir_parts, re.sub(r'_\d+$', '', video_stems[0])).with_suffix(EXTENSION)
-        logging.info(f'START concatenating {new_filepath.name}')
+        prs = []
+        for stream_data in streams_data:
+            filepath = self.get_stream_filepath(stream_data['name'])
+            logging.info(f'START capture stream. name="{filepath.name}"')
 
-        # Concatenate all parts to create new large video
-        out = cv2.VideoWriter(str(new_filepath), cv2.VideoWriter_fourcc(*'XVID'), FPS, RESOLUTION)
-        for video_stem in video_stems:
-            video_path = Path(dir_parts, video_stem).with_suffix(EXTENSION)
-            logging.info(f'Concatenating {video_path.name}')
-            video = cv2.VideoCapture(str(video_path))
-            while video.isOpened():
-                r, frame = video.read()
-                if not r:
-                    break
-                out.write(frame)
-            video.release()
-            video_path.unlink()
-        out.release()
+            pr = subprocess.Popen(
+                [
+                    'ffmpeg',
+                    '-rtsp_transport', 'tcp',
+                    '-i', stream_data['url'],
+                    '-loglevel', 'fatal',
+                    self.get_stream_filepath(stream_data['name']),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE
+            )
+            prs.append(pr)
 
-        logging.info(f'END concatenating {new_filepath.name}')
-        return new_filepath
-
-    @staticmethod
-    def wait_concat_and_upload(prs: list[Process], dt: datetime):
-        global videos_uploaded
+        while all(pr.poll() is None for pr in prs):
+            if datetime.now().minute == 0 and datetime.now().second == 0:
+                # for pr in prs:
+                #     pr.terminate()
+                break
+            time.sleep(.01)
+        logging.info(f'END capture ALL streams')
 
         for pr in prs:
-            pr.join()
+            err = pr.stderr.read().decode('utf-8')
+            if err:
+                logging.error(err)
+
+
+    @staticmethod
+    def concat_all_parts(streams_data: list[dict], dt: datetime) -> None:
+        """ Concatenate n videos to 60 minutes video for every stream """
+
+        for stream_data in streams_data:
+            dir_parts = Path(
+                FOLDER_RECORDS, dt.strftime('%d-%m-%y'),
+                stream_data['name'], dt.strftime('%Hh')
+            )
+
+            video_stems = [f.stem for f in dir_parts.iterdir()]
+            video_stems.sort(key=lambda x: int(re.search(r'(?<=_)\d+$', x).group(0)))
+            parts_filepaths = [Path(dir_parts, stem).with_suffix(EXTENSION).absolute()
+                               for stem in video_stems]
+
+            new_filepath = Path(
+                dir_parts, re.sub(r'_\d+$', '', video_stems[0])
+            ).with_suffix(EXTENSION)
+
+            logging.info(f'START concatenating {new_filepath.name}')
+            subprocess.run(
+                [
+                    'ffmpeg',
+                    '-safe', '0',
+                    '-f', 'concat',
+                    # '-segment_time_metadata', '1'
+                    '-i', '/dev/stdin',
+                    '-c', 'copy',
+                    # '-vf', 'select=concatdec_select',
+                    # '-af', 'aselect=concatdec_select,aresample=async=1',
+                    new_filepath.absolute()
+                ],
+                input="".join(f'file {filepath}\n' for filepath in parts_filepaths),
+                text=True
+            )
+            logging.info(f'END concatenating {new_filepath.name}')
+            # for filepath in parts_filepaths:
+            #     filepath.unlink()
+        else:
+            logging.info(f'ALL parts for all stream was concatenated. Local files was removed')
+
+    def wait_and_upload(self, dt: datetime):
+        self.tr_concat.join()
+        self.tr_concat = None
 
         try:
             upload_and_remove(dt)
         except Exception as ex:
             logging.error(ex, exc_info=True)
         finally:
-            videos_uploaded = False
+            self.tr_upload = None
 
     @staticmethod
     def remove_local_dir_records():
         shutil.rmtree(FOLDER_RECORDS, ignore_errors=True)
-        logging.info(f'Local "{FOLDER_RECORDS}" directory was removed')
+        logging.info(f'Local directory {FOLDER_RECORDS}" was removed')
 
-    def start_recording(self):
-        global videos_uploaded
+    def start_work(self):
 
         while True:
             with Session() as s:
@@ -222,40 +236,23 @@ class IntercomRecorder:
                         logging.error(error)
                         break
 
-                    self.record_threads = [Thread(
-                        target=self.record_stream,
-                        args=(stream_data,)
-                    )
-                        for stream_data in streams_data]
-
-                    for tr in self.record_threads:
-                        tr.start()
-                    for tr in self.record_threads:
-                        tr.join()
+                    self.record_all_streams(streams_data)
 
                     current_dt = datetime.now(tz=ZoneInfo('Europe/Moscow'))
-                    if not videos_uploaded and current_dt.minute == 0:
-                        prs_concat = []
+                    if not self.tr_upload and not self.tr_concat and current_dt.minute == 0:
                         dt_to_concat = current_dt - timedelta(hours=1)
-                        for stream_data in streams_data:
-                            pr = Process(
-                                target=self.concatenate_video_parts,
-                                args=(
-                                    stream_data['name'],
-                                    dt_to_concat
-                                )
-                            )
-                            prs_concat.append(pr)
-                            pr.start()
 
-                        videos_uploaded = True
-                        Thread(
-                            target=self.wait_concat_and_upload,
-                            args=(
-                                prs_concat,
-                                dt_to_concat
-                            )
-                        ).start()
+                        self.tr_concat = Thread(
+                            target=self.concat_all_parts,
+                            args=(streams_data, dt_to_concat)
+                        )
+                        self.tr_concat.start()
+
+                        self.tr_upload = Thread(
+                            target=self.wait_and_upload,
+                            args=(dt_to_concat,)
+                        )
+                        self.tr_upload.start()
 
 
 def main():
@@ -272,9 +269,16 @@ def main():
     if args.r:
         intercom_recorder.remove_local_dir_records()
 
-    intercom_recorder.start_recording()
+    intercom_recorder.start_work()
 
 
 if __name__ == '__main__':
     get_logger('IntercomRecorder.log')
     main()
+    # streams_data = [
+    #     # {'name': 'Подъезд_Вход_со_двора'},
+    #     # {'name': 'Подъезд_Вход_с_улицы'},
+    #     {'name': '13_Этаж_Дверь_1'}
+    # ]
+    # dt = datetime.now(tz=ZoneInfo('Europe/Moscow')) - timedelta(hours=0)
+    # IntercomRecorder.concat_all_parts(streams_data, dt)
