@@ -139,6 +139,7 @@ class IntercomRecorder:
                 [
                     'ffmpeg',
                     '-rtsp_transport', 'tcp',
+                    # '-use_wallclock_as_timestamps', '1',
                     '-i', stream_data['url'],
                     '-loglevel', 'fatal',
                     self.get_stream_filepath(stream_data['name']),
@@ -149,10 +150,10 @@ class IntercomRecorder:
             prs.append(pr)
 
         while all(pr.poll() is None for pr in prs):
-            if datetime.now().minute == 0 and datetime.now().second == 0:
+            # if datetime.now().minute == 0 and not self.tr_concat:
                 # for pr in prs:
                 #     pr.terminate()
-                break
+                # break
             time.sleep(.01)
         logging.info(f'END capture ALL streams')
 
@@ -161,10 +162,48 @@ class IntercomRecorder:
             if err:
                 logging.error(err)
 
+    @staticmethod
+    def fix_timestamp(filepath: Path):
+        temp_filepath = Path(filepath.parent, filepath.stem + '_temp').with_suffix(filepath.suffix).absolute()
+
+        pr = subprocess.run(
+            [
+                'ffmpeg',
+                '-hide_banner',
+                '-y',
+                '-i', str(filepath),
+                '-avoid_negative_ts', 'make_zero',
+                '-video_track_timescale', '90000',
+                '-c', 'copy',
+                str(temp_filepath)
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE
+        )
+        stderr = pr.stderr.decode('utf-8')
+
+        if temp_filepath.exists():
+            temp_filepath.replace(filepath)
+        else:
+            if re.search(
+                    r'Output file #\d* does not contain any stream|'
+                    r'Invalid data found when processing input',
+                    stderr
+            ):
+                logging.warning(f'Remove {filepath.name}\n{stderr}')
+                filepath.unlink()
+            else:
+                logging.error(f'UNUSUAL ERROR WHILE FIXING TIMESTAMP\n{stderr}')
 
     @staticmethod
     def concat_all_parts(streams_data: list[dict], dt: datetime) -> None:
         """ Concatenate n videos to 60 minutes video for every stream """
+
+        def get_sorted_parts(dir_: Path) -> list[Path]:
+            return sorted(
+                [p.absolute() for p in dir_.iterdir() if re.search(r'(?<=_)\d+$', p.stem)],
+                key=lambda p: int(re.search(r'(?<=_)\d+$', p.stem).group(0))
+            )
 
         for stream_data in streams_data:
             dir_parts = Path(
@@ -172,36 +211,42 @@ class IntercomRecorder:
                 stream_data['name'], dt.strftime('%Hh')
             )
 
-            video_stems = [f.stem for f in dir_parts.iterdir()]
-            video_stems.sort(key=lambda x: int(re.search(r'(?<=_)\d+$', x).group(0)))
-            parts_filepaths = [Path(dir_parts, stem).with_suffix(EXTENSION).absolute()
-                               for stem in video_stems]
+            for filepath in get_sorted_parts(dir_parts):
+                IntercomRecorder.fix_timestamp(filepath)
+
+            parts_filepaths = get_sorted_parts(dir_parts)
+            with open('list_video.txt', 'w') as f:
+                f.write(''.join([f"file '{str(p)}'\n" for p in parts_filepaths]))
 
             new_filepath = Path(
-                dir_parts, re.sub(r'_\d+$', '', video_stems[0])
+                dir_parts, re.sub(r'_\d+$', '', parts_filepaths[0].stem)
             ).with_suffix(EXTENSION)
 
             logging.info(f'START concatenating {new_filepath.name}')
-            subprocess.run(
+            pr = subprocess.run(
                 [
                     'ffmpeg',
                     '-safe', '0',
                     '-f', 'concat',
-                    # '-segment_time_metadata', '1'
-                    '-i', '/dev/stdin',
+                    '-i', 'list_video.txt',
                     '-c', 'copy',
-                    # '-vf', 'select=concatdec_select',
-                    # '-af', 'aselect=concatdec_select,aresample=async=1',
                     new_filepath.absolute()
                 ],
-                input="".join(f'file {filepath}\n' for filepath in parts_filepaths),
-                text=True
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
-            logging.info(f'END concatenating {new_filepath.name}')
-            # for filepath in parts_filepaths:
-            #     filepath.unlink()
+
+            stderr = pr.stderr.decode('utf-8')
+            if new_filepath.exists():
+                logging.info(f'END with SUCCESS concatenating {new_filepath.name}')
+                for filepath in get_sorted_parts(dir_parts):
+                    filepath.unlink()
+                else:
+                    logging.info(f'Local parts for {new_filepath.name} removed')
+            else:
+                logging.error(f'END with ERROR concatenating {new_filepath.name}\n{stderr}')
         else:
-            logging.info(f'ALL parts for all stream was concatenated. Local files was removed')
+            logging.info(f'ALL parts concatenating tasks finished somehow')
 
     def wait_and_upload(self, dt: datetime):
         self.tr_concat.join()
@@ -230,6 +275,8 @@ class IntercomRecorder:
                     continue
 
                 while True:
+                    dt_before = datetime.now(tz=ZoneInfo('Europe/Moscow'))
+
                     try:
                         streams_data = self.get_available_streams(s, bearer_token)
                     except RequestException as error:
@@ -237,22 +284,34 @@ class IntercomRecorder:
                         break
 
                     self.record_all_streams(streams_data)
-
                     current_dt = datetime.now(tz=ZoneInfo('Europe/Moscow'))
-                    if not self.tr_upload and not self.tr_concat and current_dt.minute == 0:
-                        dt_to_concat = current_dt - timedelta(hours=1)
+
+                    if not self.tr_upload \
+                            and not self.tr_concat \
+                            and dt_before.hour != current_dt.hour:
 
                         self.tr_concat = Thread(
                             target=self.concat_all_parts,
-                            args=(streams_data, dt_to_concat)
+                            args=(streams_data, dt_before)
                         )
                         self.tr_concat.start()
 
                         self.tr_upload = Thread(
                             target=self.wait_and_upload,
-                            args=(dt_to_concat,)
+                            args=(dt_before,)
                         )
                         self.tr_upload.start()
+
+
+def __test_concat__():
+    get_logger('test.log')
+    streams_data = [
+        # {'name': 'Подъезд_Вход_со_двора'},
+        # {'name': 'Подъезд_Вход_с_улицы'},
+        {'name': '13_Этаж_Дверь_1'}
+    ]
+    dt = datetime.now(tz=ZoneInfo('Europe/Moscow')) - timedelta(hours=17)
+    IntercomRecorder.concat_all_parts(streams_data, dt)
 
 
 def main():
@@ -275,10 +334,3 @@ def main():
 if __name__ == '__main__':
     get_logger('IntercomRecorder.log')
     main()
-    # streams_data = [
-    #     # {'name': 'Подъезд_Вход_со_двора'},
-    #     # {'name': 'Подъезд_Вход_с_улицы'},
-    #     {'name': '13_Этаж_Дверь_1'}
-    # ]
-    # dt = datetime.now(tz=ZoneInfo('Europe/Moscow')) - timedelta(hours=0)
-    # IntercomRecorder.concat_all_parts(streams_data, dt)
