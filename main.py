@@ -141,6 +141,10 @@ class IntercomRecorder:
                     '-rtsp_transport', 'tcp',
                     # '-use_wallclock_as_timestamps', '1',
                     '-i', stream_data['url'],
+                    # '-b:v', '1000K',
+                    # '-maxrate:v', '1200K',
+                    # '-bufsize:v', '500K',
+                    '-q:v', '1',
                     '-loglevel', 'fatal',
                     self.get_stream_filepath(stream_data['name']),
                 ],
@@ -150,10 +154,6 @@ class IntercomRecorder:
             prs.append(pr)
 
         while all(pr.poll() is None for pr in prs):
-            # if datetime.now().minute == 0 and not self.tr_concat:
-                # for pr in prs:
-                #     pr.terminate()
-                # break
             time.sleep(.01)
         logging.info(f'END capture ALL streams')
 
