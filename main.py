@@ -144,7 +144,7 @@ class IntercomRecorder:
                     # '-b:v', '1000K',
                     # '-maxrate:v', '1200K',
                     # '-bufsize:v', '500K',
-                    '-q:v', '1',
+                    '-q:v', '1',  # quality parameter
                     '-loglevel', 'fatal',
                     self.get_stream_filepath(stream_data['name']),
                 ],
