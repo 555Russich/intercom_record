@@ -139,28 +139,34 @@ class IntercomRecorder:
                 [
                     'ffmpeg',
                     '-rtsp_transport', 'tcp',
-                    # '-use_wallclock_as_timestamps', '1',
                     '-i', stream_data['url'],
-                    # '-b:v', '1000K',
-                    # '-maxrate:v', '1200K',
-                    # '-bufsize:v', '500K',
                     '-q:v', '1',  # quality parameter
+                    '-t', '00:02:00',
                     '-loglevel', 'fatal',
-                    self.get_stream_filepath(stream_data['name']),
+                    filepath,
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE
             )
-            prs.append(pr)
+            prs.append((pr, filepath))
 
-        while all(pr.poll() is None for pr in prs):
+        while True:
+            for pr_data in prs:
+                if pr_data[0].poll() is not None:
+                    logging.info(f'END capture stream. name={pr_data[1].name}')
+                    prs.remove(pr_data)
+            if len(prs) == 0:
+                logging.info('END capture ALL streams')
+                break
             time.sleep(.01)
-        logging.info(f'END capture ALL streams')
 
-        for pr in prs:
-            err = pr.stderr.read().decode('utf-8')
-            if err:
-                logging.error(err)
+        for pr_data in prs:
+            try:
+                err = pr_data[0].stderr.read().decode('utf-8')
+                if err:
+                    logging.error(err)
+            except Exception as ex:
+                logging.error(ex, exc_info=True)
 
     @staticmethod
     def fix_timestamp(filepath: Path):
@@ -270,8 +276,8 @@ class IntercomRecorder:
             with Session() as s:
                 try:
                     bearer_token = self.authorize(s)
-                except RequestException as error:
-                    logging.error(error)
+                except RequestException as ex:
+                    logging.error(ex, exc_info=True)
                     continue
 
                 while True:
@@ -279,8 +285,8 @@ class IntercomRecorder:
 
                     try:
                         streams_data = self.get_available_streams(s, bearer_token)
-                    except RequestException as error:
-                        logging.error(error)
+                    except RequestException as ex:
+                        logging.error(ex, exc_info=True)
                         break
 
                     self.record_all_streams(streams_data)
