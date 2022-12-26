@@ -14,49 +14,51 @@ with open('settings.json', 'r') as f:
 
 
 def upload_videos(y: yadisk.YaDisk, dt: datetime):
-    """ Upload files to Yandex cloud without file extension,
-     move extension back, delete local files and check
-     if files on cloud are older than ROTATION_DAYS
-     """
+    """ Upload files to Yandex cloud without file extension, delete local files """
 
     date_dir = Path(FOLDER_RECORDS, dt.strftime('%d-%m-%y'))
     for camera_dir in date_dir.iterdir():
-        if camera_dir.is_dir():
-            hour_dir = Path(camera_dir, dt.strftime('%Hh'))
-            filepaths = [f for f in hour_dir.iterdir()]
+        hour_dir = Path(camera_dir, dt.strftime('%Hh'))
+        filepaths = list(hour_dir.iterdir())
+
+        try:
             assert len(filepaths) == 1
-            filepath = filepaths[0]
-            # files with extension uploads to cloud very slowly
-            cloud_filepath = Path(camera_dir, filepath.stem)
+        except AssertionError:
+            logging.error(f'Directory {hour_dir.absolute()} contains {len(filepaths)} files')
+            continue
 
-            for _dir in reversed([x for x in cloud_filepath.parents][:-1]):
-                for retry in range(1, 4):
-                    try:
-                        y.mkdir(str(_dir))
-                        break
-                    except yadisk.exceptions.PathExistsError:
-                        break
-                    except Exception as ex:
-                        if retry == 3:
-                            raise ex
-                        else:
-                            logging.warning(ex, exc_info=True)
-                        time.sleep(5)
-                    finally:
-                        time.sleep(1)
+        filepath = filepaths[0]
+        # files with extension uploads to cloud very slowly
+        cloud_filepath = Path(camera_dir, filepath.stem)
 
-            y.upload(str(filepath), str(cloud_filepath), timeout=(10, 10*60))
-            # # extension coming back
-            # y.move(str(cloud_filepath), str(cloud_filepath.with_suffix(filepath.suffix)))
+        for _dir in reversed([x for x in cloud_filepath.parents][:-1]):
+            for retry in range(1, 4):
+                try:
+                    y.mkdir(str(_dir))
+                    break
+                except yadisk.exceptions.PathExistsError:
+                    break
+                except Exception as ex:
+                    if retry == 3:
+                        raise ex
+                    else:
+                        logging.warning(ex, exc_info=True)
+                    time.sleep(5)
+                finally:
+                    time.sleep(1)
 
-            filepath.unlink()
-            hour_dir.rmdir()
-            try:
-                camera_dir.rmdir()
-            except OSError:
-                pass
+        y.upload(str(filepath), str(cloud_filepath), timeout=(10, 10*60))
+        # # extension coming back
+        # y.move(str(cloud_filepath), str(cloud_filepath.with_suffix(filepath.suffix)))
 
-            logging.info(f'{filepath.name} was uploaded and removed from local')
+        filepath.unlink()
+        hour_dir.rmdir()
+        try:
+            camera_dir.rmdir()
+        except OSError:
+            pass
+
+        logging.info(f'{filepath.name} was uploaded and removed from local')
     else:
         logging.info(f'All videos by {dt.strftime("%d-%m-%y")} date and {dt.strftime("%H")} hour'
                      f' was uploaded and removed from local')
@@ -79,7 +81,7 @@ def remove_old_streams(y: yadisk.YaDisk, dt: datetime):
                 permanently=True,
                 timeout=60
             )
-            logging.info(f'Folder "{dir_data["name"]}" was removed from yandex disk')
+            logging.info(f'Directory "{dir_data["name"]}" was removed from yandex disk')
 
 
 def upload_and_remove(dt):
