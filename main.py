@@ -92,14 +92,20 @@ class IntercomRecorder:
             timeout=10
         )
         if r.status_code == 200:
-            return [
+            streams_data = [
                 {
                     'name': '_'.join(d['relays'][0]['name'].split()),
                     'url': d['relays'][0]['rtsp_url'],
                     'id': d['relays'][0]['id']
                 }
-                for d in r.json() if d['relays'][0]['rtsp_url'] and d['relays'][0]['name'].lower() in CAMERAS_NAMES
+                for d in r.json()
+                if d['relays'][0]['rtsp_url'] and d['relays'][0]['name'].lower() in CAMERAS_NAMES
             ]
+
+            for camera_name in set(['_'.join(x.split()) for x in CAMERAS_NAMES]).\
+                    difference([d['name'].lower() for d in streams_data]):
+                logging.warning(f'Did not get stream data for camera "{camera_name}"')
+            return streams_data
         raise RequestException(f'Get stream urls error. Response code is {r.status_code}')
 
     @staticmethod
@@ -118,7 +124,7 @@ class IntercomRecorder:
         for p in reversed(filepath.parents):
             p.mkdir(exist_ok=True)
 
-        if [p for p in filepath.parent.iterdir()]:
+        if list(filepath.parent.iterdir()):
             parts = [int(re.search(r'(?<=_)\d+$', p.stem).group(0)) for p in filepath.parent.iterdir()]
             parts.sort()
             filepath = Path(
@@ -202,7 +208,7 @@ class IntercomRecorder:
                 logging.error(f'UNUSUAL ERROR WHILE FIXING TIMESTAMP\n{stderr}')
 
     @staticmethod
-    def concat_all_parts(streams_data: list[dict], dt: datetime) -> None:
+    def concat_all_parts(dt: datetime) -> None:
         """ Concatenate n videos to 60 minutes video for every stream """
 
         def get_sorted_parts(dir_: Path) -> list[Path]:
@@ -211,11 +217,9 @@ class IntercomRecorder:
                 key=lambda p: int(re.search(r'(?<=_)\d+$', p.stem).group(0))
             )
 
-        for stream_data in streams_data:
-            dir_parts = Path(
-                FOLDER_RECORDS, dt.strftime('%d-%m-%y'),
-                stream_data['name'], dt.strftime('%Hh')
-            )
+        date_dir = Path(FOLDER_RECORDS, dt.strftime('%d-%m-%y'))
+        for camera_dir in date_dir.iterdir():
+            dir_parts = Path(camera_dir, dt.strftime('%Hh'))
 
             for filepath in get_sorted_parts(dir_parts):
                 IntercomRecorder.fix_timestamp(filepath)
@@ -298,7 +302,7 @@ class IntercomRecorder:
 
                         self.tr_concat = Thread(
                             target=self.concat_all_parts,
-                            args=(streams_data, dt_before)
+                            args=(dt_before,)
                         )
                         self.tr_concat.start()
 
@@ -317,7 +321,7 @@ def __test_concat__():
         {'name': '13_Этаж_Дверь_1'}
     ]
     dt = datetime.now(tz=ZoneInfo('Europe/Moscow')) - timedelta(hours=17)
-    IntercomRecorder.concat_all_parts(streams_data, dt)
+    IntercomRecorder.concat_all_parts(dt)
 
 
 def main():
