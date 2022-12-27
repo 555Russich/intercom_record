@@ -91,22 +91,24 @@ class IntercomRecorder:
             headers=headers,
             timeout=10
         )
-        if r.status_code == 200:
-            streams_data = [
-                {
-                    'name': '_'.join(d['relays'][0]['name'].split()),
-                    'url': d['relays'][0]['rtsp_url'],
-                    'id': d['relays'][0]['id']
-                }
-                for d in r.json()
-                if d['relays'][0]['rtsp_url'] and d['relays'][0]['name'].lower() in CAMERAS_NAMES
-            ]
+        if r.status_code != 200:
+            raise RequestException(f'Get stream urls error. Response code is {r.status_code}')
 
-            for camera_name in set(['_'.join(x.split()) for x in CAMERAS_NAMES]).\
-                    difference([d['name'].lower() for d in streams_data]):
-                logging.warning(f'Did not get stream data for camera "{camera_name}"')
-            return streams_data
-        raise RequestException(f'Get stream urls error. Response code is {r.status_code}')
+        streams_data = []
+        for d in r.json():
+            for relay in d['relays']:
+                if relay['rtsp_url'] and relay['name'].lower() in CAMERAS_NAMES:
+                    stream_data = {
+                        'name': '_'.join(relay['name'].split()),
+                        'url': relay['rtsp_url'],
+                        'id': relay['id']
+                    }
+                    streams_data.append(stream_data)
+
+        for camera_name in set(['_'.join(x.split()) for x in CAMERAS_NAMES]).\
+                difference([d['name'].lower() for d in streams_data]):
+            logging.warning(f'Did not get stream data for camera "{camera_name}"')
+        return streams_data
 
     @staticmethod
     def get_stream_filepath(camera_name: str) -> Path:
